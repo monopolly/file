@@ -43,15 +43,10 @@ type progress struct {
 		console.Play("%dMb/%dMb — %%%v", now/1024/1024, total/1024/1024, percent)
 	})
 */
-func Downloader(from, to string, progressHandler func(now, total int, percent float64), threads ...int) (totalTime time.Duration, err error) {
+func Downloader(from, to string, progressHandler func(now, total int, percent float64), stop ...chan error) (totalTime time.Duration, err error) {
 
 	sum := new(downloader)
-	switch threads != nil {
-	case true:
-		sum.concurrency = threads[0]
-	default:
-		sum.concurrency = runtime.NumCPU()
-	}
+	sum.concurrency = runtime.NumCPU()
 	sum.progress = progressHandler
 	sum.uri = from
 	sum.chunks = make(map[int]*os.File)
@@ -59,7 +54,9 @@ func Downloader(from, to string, progressHandler func(now, total int, percent fl
 	sum.fileName = filepath.Base(sum.uri)
 	sum.RWMutex = &sync.RWMutex{}
 	sum.progressBar = make(map[int]*progress)
-	sum.stop = make(chan error)
+	if stop != nil {
+		sum.stop = stop[0]
+	}
 
 	if err = sum.createOutputFile(to); err != nil {
 		return
