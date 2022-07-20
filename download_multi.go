@@ -18,18 +18,22 @@ import (
 	"time"
 )
 
-type downloader struct {
-	concurrency   int               //No. of connections
-	uri           string            //URL of the file we want to download
-	chunks        map[int]*os.File  //Map of temporary files we are creating
-	err           error             //used when error occurs inside a goroutine
-	startTime     time.Time         //to track time took
-	fileName      string            //name of the file we are downloading
-	out           *os.File          //output / downloaded file
+type Downloader struct {
+	concurrency   int              //No. of connections
+	uri           string           //URL of the file we want to download
+	chunks        map[int]*os.File //Map of temporary files we are creating
+	err           error            //used when error occurs inside a goroutine
+	startTime     time.Time        //to track time took
+	fileName      string           //name of the file we are downloading
+	out           *os.File         //output / downloaded file
+	to            string
 	progressBar   map[int]*progress //index => progress
 	stop          chan error        //to handle stop signals from terminal
 	*sync.RWMutex                   //mutex to lock the maps which accessing it concurrently
 	progress      func(now, total int, percent float64)
+	header        map[string]string
+	breaks        chan bool
+	totalTime     time.Duration
 }
 
 type progress struct {
@@ -37,84 +41,93 @@ type progress struct {
 	total int //total bytes which we are supposed to read
 }
 
-// по дефолту max cores
-/*
-	Downloader(link, "out.zip", func(now, total int, percent float64) {
-		console.Play("%dMb/%dMb — %%%v", now/1024/1024, total/1024/1024, percent)
-	})
-*/
-func Downloader(from, to string, progressHandler func(now, total int, percent float64), stops ...chan bool) (totalTime time.Duration, err error) {
+func Download(from, to string) (a *Downloader) {
+	a = new(Downloader)
+	a.to = to
+	a.breaks = make(chan bool)
+	a.concurrency = runtime.NumCPU()
+	a.uri = from
+	a.chunks = make(map[int]*os.File)
+	a.startTime = time.Now()
+	a.fileName = filepath.Base(a.uri)
+	a.RWMutex = &sync.RWMutex{}
+	a.progressBar = make(map[int]*progress)
+	a.stop = make(chan error)
+	a.header = make(map[string]string)
+	return
+}
 
-	sum := new(downloader)
-	sum.concurrency = runtime.NumCPU()
-	sum.progress = progressHandler
-	sum.uri = from
-	sum.chunks = make(map[int]*os.File)
-	sum.startTime = time.Now()
-	sum.fileName = filepath.Base(sum.uri)
-	sum.RWMutex = &sync.RWMutex{}
-	sum.progressBar = make(map[int]*progress)
-	sum.stop = make(chan error)
+func (a *Downloader) Header(k, v string) *Downloader {
+	a.header[k] = v
+	return a
+}
 
-	if err = sum.createOutputFile(to); err != nil {
+func (a *Downloader) Stop() {
+	a.breaks <- true
+}
+
+func (a *Downloader) Start(progress ...func(now, total int, percent float64)) (err error) {
+
+	if progress != nil {
+		a.progress = progress[0]
+	}
+
+	if err = a.createOutputFile(a.to); err != nil {
 		return
 	}
 
-	//get the user kill signals
-	go sum.catchSignals()
-	if stops != nil {
-		go sum.userstop(stops[0])
-	}
+	go a.catchSignals()
+	go a.userstop(a.breaks)
 
-	if err = sum.run(); err != nil {
+	if err = a.run(); err != nil {
 		return
 	}
 
-	totalTime = time.Since(sum.startTime)
+	a.totalTime = time.Since(a.startTime)
 	return
 
 }
 
-func (sum *downloader) userstop(s chan bool) {
+func (a *Downloader) userstop(s chan bool) {
 	<-s
-	for i := 0; i < len(sum.chunks); i++ {
-		sum.stop <- fmt.Errorf("stop")
+	for i := 0; i < len(a.chunks); i++ {
+		a.stop <- fmt.Errorf("stop")
 	}
 }
 
 //createOutputFile ...
-func (sum *downloader) createOutputFile(to string) (err error) {
+func (a *Downloader) createOutputFile(to string) (err error) {
 	out, err := os.OpenFile(to, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0755)
 	if err != nil {
 		return
 	}
-	sum.out = out
+	a.out = out
 	return nil
 }
 
 //run is basically the start method
-func (sum *downloader) run() error {
+func (a *Downloader) run() error {
 
-	support, contentLength, err := getRangeDetails(sum.uri)
+	support, contentLength, err := a.getRangeDetails(a.uri)
 	if err != nil {
 		return err
 	}
 
 	if !support {
-		sum.concurrency = 1
+		a.concurrency = 1
 	}
 
-	return sum.process(contentLength)
+	return a.process(contentLength)
 
 }
 
 //process is the manager method
-func (sum *downloader) process(contentLength int) error {
+func (a *Downloader) process(contentLength int) error {
 
 	//Close the output file after everything is done
-	defer sum.out.Close()
+	defer a.out.Close()
 
-	split := contentLength / sum.concurrency
+	split := contentLength / a.concurrency
 
 	wg := &sync.WaitGroup{}
 	index := 0
@@ -125,38 +138,38 @@ func (sum *downloader) process(contentLength int) error {
 			j = contentLength
 		}
 
-		f, err := os.CreateTemp("", sum.fileName+".*.part")
+		f, err := os.CreateTemp("", a.fileName+".*.part")
 		if err != nil {
 			return err
 		}
 		defer f.Close()
 		defer os.Remove(f.Name())
 
-		sum.chunks[index] = f
-		sum.progressBar[index] = &progress{curr: 0, total: j - i}
+		a.chunks[index] = f
+		a.progressBar[index] = &progress{curr: 0, total: j - i}
 
 		wg.Add(1)
-		go sum.downloadFileForRange(wg, sum.uri, strconv.Itoa(i)+"-"+strconv.Itoa(j), index, f)
+		go a.downloadFileForRange(wg, a.uri, strconv.Itoa(i)+"-"+strconv.Itoa(j), index, f)
 		index++
 	}
 
 	stop := make(chan struct{})
 
 	//Keep Printing Progress
-	go sum.startProgressBar(stop)
+	go a.startProgressBar(stop)
 	wg.Wait()
 
 	stop <- struct{}{}
 
-	if sum.err != nil {
-		os.Remove(sum.out.Name())
-		return sum.err
+	if a.err != nil {
+		os.Remove(a.out.Name())
+		return a.err
 	}
 
-	return sum.combineChunks()
+	return a.combineChunks()
 }
 
-func (sum *downloader) startProgressBar(stop chan struct{}) {
+func (a *Downloader) startProgressBar(stop chan struct{}) {
 
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
@@ -165,23 +178,23 @@ func (sum *downloader) startProgressBar(stop chan struct{}) {
 		select {
 		case <-ticker.C:
 			var count, total int
-			for i := 0; i < len(sum.progressBar); i++ {
-				sum.RLock()
-				p := *sum.progressBar[i]
+			for i := 0; i < len(a.progressBar); i++ {
+				a.RLock()
+				p := *a.progressBar[i]
 				count = count + p.curr
 				total = total + p.total
-				sum.RUnlock()
+				a.RUnlock()
 			}
-			sum.progress(count, total, math.Floor(float64(count)/float64(total)*100))
+			a.progress(count, total, math.Floor(float64(count)/float64(total)*100))
 		case <-stop:
 			var count, total int
-			for i := 0; i < len(sum.progressBar); i++ {
-				sum.RLock()
-				p := *sum.progressBar[i]
+			for i := 0; i < len(a.progressBar); i++ {
+				a.RLock()
+				p := *a.progressBar[i]
 				count = count + p.curr
 				total = total + p.total
-				sum.RUnlock()
-				sum.progress(count, total, math.Floor(float64(count)/float64(total)*100))
+				a.RUnlock()
+				a.progress(count, total, math.Floor(float64(count)/float64(total)*100))
 			}
 			return
 		}
@@ -190,64 +203,68 @@ func (sum *downloader) startProgressBar(stop chan struct{}) {
 }
 
 //combineChunks will combine the chunks in ordered fashion starting from 1
-func (sum *downloader) combineChunks() error {
+func (a *Downloader) combineChunks() error {
 
 	var w int64
 	//maps are not ordered hence using for loop
-	for i := 0; i < len(sum.chunks); i++ {
-		handle := sum.chunks[i]
+	for i := 0; i < len(a.chunks); i++ {
+		handle := a.chunks[i]
 		handle.Seek(0, 0) //We need to seek because read and write cursor are same and the cursor would be at the end.
-		written, err := io.Copy(sum.out, handle)
+		written, err := io.Copy(a.out, handle)
 		if err != nil {
 			return err
 		}
 		w += written
 	}
 
-	//log.Printf("Wrote to File : %v, Written bytes : %v", sum.out.Name(), w)
+	//log.Printf("Wrote to File : %v, Written bytes : %v", a.out.Name(), w)
 
 	return nil
 }
 
 //downloadFileForRange will download the file for the provided range and set the bytes to the chunk map, will set summor.error field if error occurs
-func (sum *downloader) downloadFileForRange(wg *sync.WaitGroup, u, r string, index int, handle io.Writer) {
+func (a *Downloader) downloadFileForRange(wg *sync.WaitGroup, u, r string, index int, handle io.Writer) {
 
 	defer wg.Done()
 
 	request, err := http.NewRequest("GET", u, strings.NewReader(""))
 	if err != nil {
-		sum.err = err
+		a.err = err
 		return
 	}
 
 	request.Header.Add("Range", "bytes="+r)
 
-	sc, err := sum.getDataAndWriteToFile(request, handle, index)
+	for k, v := range a.header {
+		request.Header.Add(k, v)
+	}
+
+	sc, err := a.getDataAndWriteToFile(request, handle, index)
 	if err != nil {
-		sum.err = err
+		a.err = err
 		return
 	}
 
 	//206 = Partial Content
 	if sc != 200 && sc != 206 {
-		sum.Lock()
-		sum.err = fmt.Errorf("Did not get 20X status code, got : %v", sc)
-		sum.Unlock()
-		log.Println(sum.err)
+		a.Lock()
+		a.err = fmt.Errorf("Did not get 20X status code, got : %v", sc)
+		a.Unlock()
+		log.Println(a.err)
 		return
 	}
 
 }
 
 //getRangeDetails returns ifRangeIsSupported,statuscode,error
-func getRangeDetails(u string) (bool, int, error) {
+func (a *Downloader) getRangeDetails(u string) (bool, int, error) {
 
 	request, err := http.NewRequest("HEAD", u, strings.NewReader(""))
 	if err != nil {
 		return false, 0, fmt.Errorf("Error while creating request : %v", err)
 	}
 
-	sc, headers, _, err := doAPICall(request)
+	sc, headers, _, err := a.doAPICall(request)
 	if err != nil {
 		return false, 0, fmt.Errorf("Error calling url : %v", err)
 	}
@@ -272,7 +289,7 @@ func getRangeDetails(u string) (bool, int, error) {
 }
 
 //doAPICall will do the api call and return statuscode,headers,data,error respectively
-func doAPICall(request *http.Request) (int, http.Header, []byte, error) {
+func (a *Downloader) doAPICall(request *http.Request) (int, http.Header, []byte, error) {
 
 	client := http.Client{
 		Timeout: 5 * time.Second,
@@ -294,7 +311,7 @@ func doAPICall(request *http.Request) (int, http.Header, []byte, error) {
 }
 
 //getDataAndWriteToFile will get the response and write to file
-func (sum *downloader) getDataAndWriteToFile(request *http.Request, f io.Writer, index int) (int, error) {
+func (a *Downloader) getDataAndWriteToFile(request *http.Request, f io.Writer, index int) (int, error) {
 
 	client := http.Client{
 		Timeout: 0,
@@ -312,10 +329,10 @@ func (sum *downloader) getDataAndWriteToFile(request *http.Request, f io.Writer,
 
 	for {
 		select {
-		case cErr := <-sum.stop:
+		case cErr := <-a.stop:
 			return response.StatusCode, cErr
 		default:
-			err := sum.readBody(response, f, buf, &readTotal, index)
+			err := a.readBody(response, f, buf, &readTotal, index)
 			if err == io.EOF {
 				return response.StatusCode, nil
 			}
@@ -327,7 +344,7 @@ func (sum *downloader) getDataAndWriteToFile(request *http.Request, f io.Writer,
 	}
 }
 
-func (sum *downloader) readBody(response *http.Response, f io.Writer, buf []byte, readTotal *int, index int) error {
+func (a *Downloader) readBody(response *http.Response, f io.Writer, buf []byte, readTotal *int, index int) error {
 
 	r, err := response.Body.Read(buf)
 
@@ -341,14 +358,14 @@ func (sum *downloader) readBody(response *http.Response, f io.Writer, buf []byte
 
 	*readTotal += r
 
-	sum.Lock()
-	sum.progressBar[index].curr = *readTotal
-	sum.Unlock()
+	a.Lock()
+	a.progressBar[index].curr = *readTotal
+	a.Unlock()
 
 	return nil
 }
 
-func (sum *downloader) catchSignals() {
+func (a *Downloader) catchSignals() {
 	sigc := make(chan os.Signal, 1)
 	signal.Notify(sigc,
 		syscall.SIGHUP,
@@ -357,8 +374,8 @@ func (sum *downloader) catchSignals() {
 		syscall.SIGQUIT)
 	go func() {
 		s := <-sigc
-		for i := 0; i < len(sum.chunks); i++ {
-			sum.stop <- fmt.Errorf("got stop signal : %v", s)
+		for i := 0; i < len(a.chunks); i++ {
+			a.stop <- fmt.Errorf("got stop signal : %v", s)
 		}
 	}()
 }
