@@ -56,6 +56,8 @@ func Downloader(from, to string, progressHandler func(now, total int, percent fl
 	sum.progressBar = make(map[int]*progress)
 	if stop != nil {
 		sum.stop = stop[0]
+	} else {
+		sum.stop = make(chan error)
 	}
 
 	if err = sum.createOutputFile(to); err != nil {
@@ -65,8 +67,8 @@ func Downloader(from, to string, progressHandler func(now, total int, percent fl
 	//get the user kill signals
 	go sum.catchSignals()
 
-	if err := sum.run(); err != nil {
-		log.Fatalf("ERROR : %s", err)
+	if err = sum.run(); err != nil {
+		return
 	}
 
 	totalTime = time.Since(sum.startTime)
@@ -306,6 +308,7 @@ func (sum *downloader) getDataAndWriteToFile(request *http.Request, f io.Writer,
 	for {
 		select {
 		case cErr := <-sum.stop:
+			fmt.Println("download stop")
 			return response.StatusCode, cErr
 		default:
 			err := sum.readBody(response, f, buf, &readTotal, index)
