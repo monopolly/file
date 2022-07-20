@@ -43,7 +43,7 @@ type progress struct {
 		console.Play("%dMb/%dMb — %%%v", now/1024/1024, total/1024/1024, percent)
 	})
 */
-func Downloader(from, to string, progressHandler func(now, total int, percent float64), stop ...chan error) (totalTime time.Duration, err error) {
+func Downloader(from, to string, progressHandler func(now, total int, percent float64), stops ...chan bool) (totalTime time.Duration, err error) {
 
 	sum := new(downloader)
 	sum.concurrency = runtime.NumCPU()
@@ -54,11 +54,7 @@ func Downloader(from, to string, progressHandler func(now, total int, percent fl
 	sum.fileName = filepath.Base(sum.uri)
 	sum.RWMutex = &sync.RWMutex{}
 	sum.progressBar = make(map[int]*progress)
-	if stop != nil {
-		sum.stop = stop[0]
-	} else {
-		sum.stop = make(chan error)
-	}
+	sum.stop = make(chan error)
 
 	if err = sum.createOutputFile(to); err != nil {
 		return
@@ -66,6 +62,9 @@ func Downloader(from, to string, progressHandler func(now, total int, percent fl
 
 	//get the user kill signals
 	go sum.catchSignals()
+	if stops != nil {
+		go sum.userstop(stops[0])
+	}
 
 	if err = sum.run(); err != nil {
 		return
@@ -74,6 +73,13 @@ func Downloader(from, to string, progressHandler func(now, total int, percent fl
 	totalTime = time.Since(sum.startTime)
 	return
 
+}
+
+func (sum *downloader) userstop(s chan bool) {
+	<-s
+	for i := 0; i < len(sum.chunks); i++ {
+		sum.stop <- fmt.Errorf("stop")
+	}
 }
 
 //createOutputFile ...
@@ -160,7 +166,6 @@ func (sum *downloader) startProgressBar(stop chan struct{}) {
 		case <-ticker.C:
 			var count, total int
 			for i := 0; i < len(sum.progressBar); i++ {
-
 				sum.RLock()
 				p := *sum.progressBar[i]
 				count = count + p.curr
@@ -308,7 +313,6 @@ func (sum *downloader) getDataAndWriteToFile(request *http.Request, f io.Writer,
 	for {
 		select {
 		case cErr := <-sum.stop:
-			fmt.Println("download stop")
 			return response.StatusCode, cErr
 		default:
 			err := sum.readBody(response, f, buf, &readTotal, index)
