@@ -11,7 +11,7 @@ import (
 	"github.com/valyala/fasthttp"
 )
 
-func DownloadSimple(link string) (file []byte, err error) {
+func Download(link string) (file []byte, err error) {
 	transport := &http.Transport{Dial: (&net.Dialer{Timeout: 20 * time.Second}).Dial, TLSHandshakeTimeout: 20 * time.Second}
 	c := &http.Client{Timeout: time.Second * 20, Transport: transport}
 	resp, err := c.Get(link)
@@ -28,7 +28,7 @@ func DownloadSimple(link string) (file []byte, err error) {
 }
 
 //добавляет хедеры и генерит юзер агента как реальный юзер
-func DownloadAgent(link string) (b []byte, err error) {
+func Downloads(link string) (b []byte, err error) {
 
 	req, _ := http.NewRequest("GET", link, nil)
 	req.Header.Add("Connection", "keep-alive")

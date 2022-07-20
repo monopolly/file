@@ -41,7 +41,7 @@ type progress struct {
 	total int //total bytes which we are supposed to read
 }
 
-func Download(from, to string) (a *Downloader) {
+func DownloadFast(from, to string) (a *Downloader) {
 	a = new(Downloader)
 	a.to = to
 	a.breaks = make(chan bool)
