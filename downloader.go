@@ -57,6 +57,13 @@ func DownloadFast(from, to string) (a *Downloader) {
 	return
 }
 
+func (a *Downloader) Close() {
+	for _, x := range a.chunks {
+		x.Close()
+	}
+	a.out.Close()
+}
+
 func (a *Downloader) Header(k, v string) *Downloader {
 	a.header[k] = v
 	return a
@@ -82,6 +89,7 @@ func (a *Downloader) Start(progress ...func(now, total int, percent float64)) (e
 	if err = a.run(); err != nil {
 		return
 	}
+	defer a.Close()
 
 	a.totalTime = time.Since(a.startTime)
 	return
