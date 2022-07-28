@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
-	"log"
 	"math"
 	"net/http"
 	"os"
@@ -256,9 +255,8 @@ func (a *Downloader) downloadFileForRange(wg *sync.WaitGroup, u, r string, index
 	//206 = Partial Content
 	if sc != 200 && sc != 206 {
 		a.Lock()
-		a.err = fmt.Errorf("Did not get 20X status code, got : %v", sc)
+		a.err = fmt.Errorf("Download error")
 		a.Unlock()
-		log.Println(a.err)
 		return
 	}
 
@@ -270,6 +268,10 @@ func (a *Downloader) getRangeDetails(u string) (bool, int, error) {
 	request, err := http.NewRequest("HEAD", u, strings.NewReader(""))
 	if err != nil {
 		return false, 0, fmt.Errorf("Error while creating request : %v", err)
+	}
+
+	for k, v := range a.header {
+		request.Header.Add(k, v)
 	}
 
 	sc, headers, _, err := a.doAPICall(request)
