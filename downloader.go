@@ -279,8 +279,12 @@ func (a *Downloader) getRangeDetails(u string) (bool, int, error) {
 		return false, 0, fmt.Errorf("Error calling url : %v", err)
 	}
 
-	if sc != 200 && sc != 206 {
-		return false, 0, fmt.Errorf("Did not get 200 or 206 response")
+	switch sc {
+	case 200, 206:
+	case 204:
+		return false, 0, fmt.Errorf("nocontent")
+	default:
+		return false, 0, fmt.Errorf("statuscode:%d", sc)
 	}
 
 	conLen := headers.Get("Content-Length")
