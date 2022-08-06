@@ -4,6 +4,7 @@ go 1.18
 
 require (
 	github.com/bkaradzic/go-lz4 v1.0.0
+	github.com/cavaliergopher/grab/v3 v3.0.1
 	github.com/fsnotify/fsnotify v1.5.4
 	github.com/klauspost/pgzip v1.2.5
 	github.com/monopolly/dirwatch v0.0.0-20220710193501-2f0afdfd87ef
