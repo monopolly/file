@@ -24,9 +24,17 @@ func Info(name string) (os.FileInfo, error) {
 }
 
 func Size(name string) int64 {
-	p, err:= Info(name)
+	p, err := Info(name)
 	if err != nil {
-		return -1
+		return 0
 	}
 	return p.Size()
+}
+
+func SizeE(name string) (size int64, err error) {
+	p, err := Info(name)
+	if err != nil {
+		return
+	}
+	return p.Size(), nil
 }
