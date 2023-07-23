@@ -48,6 +48,12 @@ func Play(filename string, h func(line string)) {
 
 		// create a new scanner and read the file line by line
 		scanner := bufio.NewScanner(file)
+
+		//adjust the capacity to your need (max characters in line)
+		const maxCapacity = 512 * 1024
+		buf := make([]byte, maxCapacity)
+		scanner.Buffer(buf, maxCapacity)
+
 		var l uint
 		for scanner.Scan() {
 			h(scanner.Text())
