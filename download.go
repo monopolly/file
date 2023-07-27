@@ -12,27 +12,20 @@ import (
 	"github.com/valyala/fasthttp"
 )
 
-/*
-
-proxyUrl, err := url.Parse("http://proxyIp:proxyPort")
-myClient := &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(proxyUrl)}}
-*/
-
 func httpclient(proxy ...string) *http.Client {
-	transport := &http.Transport{
-		Dial:                (&net.Dialer{Timeout: 30 * time.Second}).Dial,
-		TLSHandshakeTimeout: 30 * time.Second}
+	transport := &http.Transport{Dial: (&net.Dialer{Timeout: 10 * time.Second}).Dial, TLSHandshakeTimeout: 10 * time.Second}
 	if proxy != nil {
-		p, err := url.Parse(proxy[0])
+		p, err := url.ParseRequestURI(proxy[0])
 		if err == nil {
 			transport.Proxy = http.ProxyURL(p)
 		}
 	}
 
-	return &http.Client{Timeout: time.Second * 20, Transport: transport}
+	return &http.Client{Timeout: time.Second * 10, Transport: transport}
 }
 
 // добавляет хедеры и генерит юзер агента как реальный юзер
+// proxy: http://proxyIp:proxyPort
 func Get(link string, proxy ...string) (b []byte, err error) {
 	req, _ := http.NewRequest("GET", link, nil)
 	req.Header.Add("Connection", "keep-alive")
