@@ -3,6 +3,8 @@ package file
 import (
 	"io/ioutil"
 	"os"
+	"path/filepath"
+	"strings"
 )
 
 func Rewrite(filename string, body []byte) (err error) {
@@ -29,6 +31,23 @@ func Size(name string) int64 {
 		return 0
 	}
 	return p.Size()
+}
+
+// file size
+func Int(name string) int {
+	p, err := Info(name)
+	if err != nil {
+		return 0
+	}
+	return int(p.Size())
+}
+
+func Ext(name string) (res string) {
+	res = filepath.Ext(name)
+	return strings.TrimPrefix(res, ".")
+}
+func Filename(path string) (res string) {
+	return filepath.Base(path)
 }
 
 func SizeE(name string) (size int64, err error) {

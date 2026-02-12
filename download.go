@@ -2,7 +2,7 @@ package file
 
 import (
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -27,8 +27,14 @@ func httpclient(proxy ...string) *http.Client {
 // добавляет хедеры и генерит юзер агента как реальный юзер
 // proxy: http://proxyIp:proxyPort
 func Get(link string, proxy ...string) (b []byte, err error) {
-	req, _ := http.NewRequest("GET", link, nil)
-	req.Header.Add("Connection", "keep-alive")
+	req, err := http.NewRequest("GET", link, nil)
+	if err != nil {
+		return
+	}
+	if req == nil {
+		return
+	}
+	//req.Header.Add("Connection", "keep-alive")
 	req.Header.Add("Accept", "*/*")
 	req.Header.Add("Accept-Language", "en-us")
 	req.Header.Add("DNT", "1")
@@ -45,10 +51,15 @@ func Get(link string, proxy ...string) (b []byte, err error) {
 		return
 	}
 
-	b, err = ioutil.ReadAll(resp.Body)
+	b, err = io.ReadAll(resp.Body)
 	if err != nil {
 		return
 	}
+	return
+}
+
+func Download(link string) (body []byte) {
+	body, _ = Get(link)
 	return
 }
 
