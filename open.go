@@ -2,64 +2,64 @@ package file
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
-	"io/ioutil"
 	"os"
 
 	"github.com/shamaton/msgpack"
 )
 
-func Open(filename string) (res []byte, err error) {
-	res, err = ioutil.ReadFile(filename)
-	return
+func Open(filename string) ([]byte, error) {
+	return os.ReadFile(filename)
 }
 
-func Move(from, to string) (err error) {
+func Move(from, to string) error {
 	return os.Rename(from, to)
 }
 
-func Copy(from, to string) (err error) {
+func Copy(from, to string) error {
 	sourceFileStat, err := os.Stat(from)
 	if err != nil {
-		return
+		return err
 	}
 
 	if !sourceFileStat.Mode().IsRegular() {
-		return
+		return errors.New("source is not a regular file")
 	}
 
 	source, err := os.Open(from)
 	if err != nil {
-		return
+		return err
 	}
 	defer source.Close()
 
 	destination, err := os.Create(to)
 	if err != nil {
-		return
+		return err
 	}
 	defer destination.Close()
+
 	_, err = io.Copy(destination, source)
-	return
+	return err
 }
 
-func OpenE(filename string) (res []byte) {
-	res, _ = ioutil.ReadFile(filename)
-	return
+func OpenE(filename string) []byte {
+	res, _ := os.ReadFile(filename)
+	return res
 }
 
-func LoadJson(filename string, v interface{}) (err error) {
-	data, err := ioutil.ReadFile(filename)
+func LoadJson(filename string, v any) error {
+	data, err := os.ReadFile(filename)
 	if err != nil {
-		return
+		return err
 	}
-	return json.Unmarshal(data, &v)
+	return json.Unmarshal(data, v)
 }
 
-func LoadMsgpack(filename string, v interface{}) (err error) {
-	data, err := ioutil.ReadFile(filename)
+func LoadMsgpack(filename string, v any) error {
+	data, err := os.ReadFile(filename)
 	if err != nil {
-		return
+		return err
 	}
-	return msgpack.Decode(data, &v)
+	return msgpack.Decode(data, v)
 }

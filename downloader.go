@@ -1,9 +1,9 @@
 package file
 
 import (
+	"errors"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"math"
 	"net/http"
 	"os"
@@ -53,14 +53,17 @@ func DownloadFast(from, to string) (a *Downloader) {
 	a.progressBar = make(map[int]*progress)
 	a.stop = make(chan error)
 	a.header = make(map[string]string)
+	a.progress = func(now, total int, percent float64) {}
 	return
 }
 
 func (a *Downloader) Close() {
 	for _, x := range a.chunks {
-		x.Close()
+		_ = x.Close()
 	}
-	a.out.Close()
+	if a.out != nil {
+		_ = a.out.Close()
+	}
 }
 
 func (a *Downloader) Header(k, v string) *Downloader {
@@ -74,7 +77,7 @@ func (a *Downloader) Stop() {
 
 func (a *Downloader) Start(progress ...func(now, total int, percent float64)) (err error) {
 
-	if progress != nil {
+	if len(progress) > 0 && progress[0] != nil {
 		a.progress = progress[0]
 	}
 
@@ -97,14 +100,15 @@ func (a *Downloader) Start(progress ...func(now, total int, percent float64)) (e
 
 func (a *Downloader) userstop(s chan bool) {
 	<-s
+	err := errors.New("stop")
 	for i := 0; i < len(a.chunks); i++ {
-		a.stop <- fmt.Errorf("stop")
+		a.stop <- err
 	}
 }
 
-//createOutputFile ...
+// createOutputFile ...
 func (a *Downloader) createOutputFile(to string) (err error) {
-	out, err := os.OpenFile(to, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0755)
+	out, err := os.OpenFile(to, os.O_CREATE|os.O_RDWR|os.O_TRUNC, 0o666)
 	if err != nil {
 		return
 	}
@@ -112,7 +116,7 @@ func (a *Downloader) createOutputFile(to string) (err error) {
 	return nil
 }
 
-//run is basically the start method
+// run is basically the start method
 func (a *Downloader) run() error {
 
 	support, contentLength, err := a.getRangeDetails(a.uri)
@@ -128,21 +132,27 @@ func (a *Downloader) run() error {
 
 }
 
-//process is the manager method
+// process is the manager method
 func (a *Downloader) process(contentLength int) error {
+	if a.concurrency <= 0 {
+		a.concurrency = 1
+	}
 
 	//Close the output file after everything is done
 	defer a.out.Close()
 
-	split := contentLength / a.concurrency
+	chunkSize := (contentLength + a.concurrency - 1) / a.concurrency
+	if chunkSize <= 0 {
+		chunkSize = 1
+	}
 
 	wg := &sync.WaitGroup{}
 	index := 0
 
-	for i := 0; i < contentLength; i += split + 1 {
-		j := i + split
-		if j > contentLength {
-			j = contentLength
+	for i := 0; i < contentLength; i += chunkSize {
+		j := i + chunkSize - 1
+		if j >= contentLength {
+			j = contentLength - 1
 		}
 
 		f, err := os.CreateTemp("", a.fileName+".*.part")
@@ -152,8 +162,10 @@ func (a *Downloader) process(contentLength int) error {
 		defer f.Close()
 		defer os.Remove(f.Name())
 
+		a.Lock()
 		a.chunks[index] = f
-		a.progressBar[index] = &progress{curr: 0, total: j - i}
+		a.progressBar[index] = &progress{curr: 0, total: j - i + 1}
+		a.Unlock()
 
 		wg.Add(1)
 		go a.downloadFileForRange(wg, a.uri, strconv.Itoa(i)+"-"+strconv.Itoa(j), index, f)
@@ -181,42 +193,45 @@ func (a *Downloader) startProgressBar(stop chan struct{}) {
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 
+	report := func() {
+		var count, total int
+		a.RLock()
+		for i := 0; i < len(a.progressBar); i++ {
+			p := *a.progressBar[i]
+			count += p.curr
+			total += p.total
+		}
+		a.RUnlock()
+
+		var percent float64
+		if total > 0 {
+			percent = math.Floor(float64(count) / float64(total) * 100)
+		}
+		a.progress(count, total, percent)
+	}
+
 	for {
 		select {
 		case <-ticker.C:
-			var count, total int
-			for i := 0; i < len(a.progressBar); i++ {
-				a.RLock()
-				p := *a.progressBar[i]
-				count = count + p.curr
-				total = total + p.total
-				a.RUnlock()
-			}
-			a.progress(count, total, math.Floor(float64(count)/float64(total)*100))
+			report()
 		case <-stop:
-			var count, total int
-			for i := 0; i < len(a.progressBar); i++ {
-				a.RLock()
-				p := *a.progressBar[i]
-				count = count + p.curr
-				total = total + p.total
-				a.RUnlock()
-				a.progress(count, total, math.Floor(float64(count)/float64(total)*100))
-			}
+			report()
 			return
 		}
 	}
 
 }
 
-//combineChunks will combine the chunks in ordered fashion starting from 1
+// combineChunks will combine the chunks in ordered fashion starting from 1
 func (a *Downloader) combineChunks() error {
 
 	var w int64
 	//maps are not ordered hence using for loop
 	for i := 0; i < len(a.chunks); i++ {
 		handle := a.chunks[i]
-		handle.Seek(0, 0) //We need to seek because read and write cursor are same and the cursor would be at the end.
+		if _, err := handle.Seek(0, io.SeekStart); err != nil { //We need to seek because read and write cursor are same and the cursor would be at the end.
+			return err
+		}
 		written, err := io.Copy(a.out, handle)
 		if err != nil {
 			return err
@@ -229,14 +244,16 @@ func (a *Downloader) combineChunks() error {
 	return nil
 }
 
-//downloadFileForRange will download the file for the provided range and set the bytes to the chunk map, will set summor.error field if error occurs
+// downloadFileForRange will download the file for the provided range and set the bytes to the chunk map, will set summor.error field if error occurs
 func (a *Downloader) downloadFileForRange(wg *sync.WaitGroup, u, r string, index int, handle io.Writer) {
 
 	defer wg.Done()
 
 	request, err := http.NewRequest("GET", u, strings.NewReader(""))
 	if err != nil {
+		a.Lock()
 		a.err = err
+		a.Unlock()
 		return
 	}
 
@@ -248,21 +265,23 @@ func (a *Downloader) downloadFileForRange(wg *sync.WaitGroup, u, r string, index
 
 	sc, err := a.getDataAndWriteToFile(request, handle, index)
 	if err != nil {
+		a.Lock()
 		a.err = err
+		a.Unlock()
 		return
 	}
 
 	//206 = Partial Content
 	if sc != 200 && sc != 206 {
 		a.Lock()
-		a.err = fmt.Errorf("Download error")
+		a.err = fmt.Errorf("download error: status code %d", sc)
 		a.Unlock()
 		return
 	}
 
 }
 
-//getRangeDetails returns ifRangeIsSupported,statuscode,error
+// getRangeDetails returns ifRangeIsSupported,statuscode,error
 func (a *Downloader) getRangeDetails(u string) (bool, int, error) {
 
 	request, err := http.NewRequest("HEAD", u, strings.NewReader(""))
@@ -302,7 +321,7 @@ func (a *Downloader) getRangeDetails(u string) (bool, int, error) {
 
 }
 
-//doAPICall will do the api call and return statuscode,headers,data,error respectively
+// doAPICall will do the api call and return statuscode,headers,data,error respectively
 func (a *Downloader) doAPICall(request *http.Request) (int, http.Header, []byte, error) {
 
 	client := http.Client{
@@ -315,7 +334,7 @@ func (a *Downloader) doAPICall(request *http.Request) (int, http.Header, []byte,
 	}
 	defer response.Body.Close()
 
-	data, err := ioutil.ReadAll(response.Body)
+	data, err := io.ReadAll(response.Body)
 	if err != nil {
 		return 0, http.Header{}, []byte{}, fmt.Errorf("Error while reading response body : %v", err)
 	}
@@ -324,7 +343,7 @@ func (a *Downloader) doAPICall(request *http.Request) (int, http.Header, []byte,
 
 }
 
-//getDataAndWriteToFile will get the response and write to file
+// getDataAndWriteToFile will get the response and write to file
 func (a *Downloader) getDataAndWriteToFile(request *http.Request, f io.Writer, index int) (int, error) {
 
 	client := http.Client{
@@ -333,12 +352,12 @@ func (a *Downloader) getDataAndWriteToFile(request *http.Request, f io.Writer, i
 
 	response, err := client.Do(request)
 	if err != nil {
-		return response.StatusCode, fmt.Errorf("Error while doing request : %v", err)
+		return 0, fmt.Errorf("Error while doing request : %v", err)
 	}
 	defer response.Body.Close()
 
 	//we make buffer of 500 bytes and try to read 500 bytes every iteration.
-	var buf = make([]byte, 500)
+	buf := make([]byte, 32*1024)
 	var readTotal int
 
 	for {
@@ -363,7 +382,9 @@ func (a *Downloader) readBody(response *http.Response, f io.Writer, buf []byte, 
 	r, err := response.Body.Read(buf)
 
 	if r > 0 {
-		f.Write(buf[:r])
+		if _, writeErr := f.Write(buf[:r]); writeErr != nil {
+			return writeErr
+		}
 	}
 
 	if err != nil {

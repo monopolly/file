@@ -1,6 +1,7 @@
 package file
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 )
@@ -12,12 +13,14 @@ func Delete(filename string) error {
 func DeleteMask(mask string) (err error) {
 	files, err := filepath.Glob(mask)
 	if err != nil {
-		return
+		return err
 	}
+
+	var errs []error
 	for _, f := range files {
 		if err := os.Remove(f); err != nil {
-			continue
+			errs = append(errs, err)
 		}
 	}
-	return
+	return errors.Join(errs...)
 }

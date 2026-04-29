@@ -1,7 +1,6 @@
 package file
 
 import (
-	"bufio"
 	"os"
 	"path"
 	"path/filepath"
@@ -18,9 +17,9 @@ func Path(filename string) (dir, name, full string) {
 }
 
 func CreateDirectory(volume string, subdirs ...string) {
-	os.MkdirAll(volume, os.ModePerm)
+	_ = os.MkdirAll(volume, 0o777)
 	for _, x := range subdirs {
-		os.MkdirAll(path.Join(volume, x), os.ModePerm)
+		_ = os.MkdirAll(path.Join(volume, x), 0o777)
 	}
 }
 
@@ -30,47 +29,38 @@ func Dir(volume string, subdirs ...string) {
 
 func Save(filename string, body []byte) (err error) {
 	dir, _, full := Path(filename)
-	err = os.MkdirAll(dir, os.ModePerm)
-	f, err := os.Create(full)
-	defer f.Close()
-	w := bufio.NewWriter(f)
-	defer w.Flush()
-	_, err = w.Write(body)
-	return
+	if err = os.MkdirAll(dir, 0o777); err != nil {
+		return err
+	}
+	return os.WriteFile(full, body, 0o666)
 }
 
 func SaveP(body []byte, filename ...string) (err error) {
 	return Save(filepath.Join(filename...), body)
 }
 
-func Json(filename string, body interface{}) (err error) {
+func Json(filename string, body any) (err error) {
 	dir, _, full := Path(filename)
-	os.MkdirAll(dir, os.ModePerm)
-	data, _ := ffjson.Marshal(body)
-	f, err := os.Create(full)
-	if err != nil {
-		return
+	if err = os.MkdirAll(dir, 0o777); err != nil {
+		return err
 	}
-	defer f.Close()
-	w := bufio.NewWriter(f)
-	defer w.Flush()
-	_, err = w.Write(data)
-	return
+	data, err := ffjson.Marshal(body)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(full, data, 0o666)
 }
 
-func Msgpack(filename string, body interface{}) (err error) {
+func Msgpack(filename string, body any) (err error) {
 	dir, _, full := Path(filename)
-	os.MkdirAll(dir, os.ModePerm)
-	data, _ := msgpack.Encode(body)
-	f, err := os.Create(full)
-	defer f.Close()
-	if err != nil {
-		return
+	if err = os.MkdirAll(dir, 0o777); err != nil {
+		return err
 	}
-	w := bufio.NewWriter(f)
-	defer w.Flush()
-	_, err = w.Write(data)
-	return
+	data, err := msgpack.Encode(body)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(full, data, 0o666)
 }
 
 /*
@@ -88,12 +78,12 @@ type writer struct {
 }
 
 func (a *writer) WriteLine(p []byte) {
-	a.Write(append(p, []byte("\n")...))
+	_, _ = a.Write(append(p, '\n'))
 }
 
 func Writer(filename string) (f writer) {
-	os.Remove(filename)
-	outbase, err := os.OpenFile(filename, os.O_CREATE|os.O_WRONLY, os.ModePerm)
+	_ = os.Remove(filename)
+	outbase, err := os.OpenFile(filename, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o666)
 	if err != nil {
 		panic(err)
 	}

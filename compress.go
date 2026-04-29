@@ -4,122 +4,170 @@ import (
 	"archive/zip"
 	"bytes"
 	"compress/gzip"
+	"errors"
 	"io"
-	"io/ioutil"
 	"os"
+	"path/filepath"
 
 	"github.com/bkaradzic/go-lz4"
 	"github.com/klauspost/pgzip"
-	"github.com/shamaton/msgpack"
+	"github.com/shamaton/msgpack/v3"
 )
 
-func Uncompress(b []byte, n interface{}) (err error) {
-	rdata := bytes.NewReader(b)
-	r, err := gzip.NewReader(rdata)
+func Uncompress(b []byte, n any) error {
+	r, err := gzip.NewReader(bytes.NewReader(b))
 	if err != nil {
-		return
+		return err
 	}
-	s, err := ioutil.ReadAll(r)
+	defer r.Close()
+
+	body, err := io.ReadAll(r)
 	if err != nil {
-		return
+		return err
 	}
-	err = msgpack.Decode(s, &n)
-	return
+
+	return msgpack.Unmarshal(body, n)
 }
 
-func Compress(a interface{}) (res []byte) {
-	body, _ := msgpack.Encode(a)
+func Compress(v any) ([]byte, error) {
+	body, err := msgpack.Marshal(v)
+	if err != nil {
+		return nil, err
+	}
+
 	var b bytes.Buffer
+
 	gz := gzip.NewWriter(&b)
-	gz.Write(body)
-	gz.Flush()
-	gz.Close()
-	return b.Bytes()
-}
-
-func Gzip(body []byte) (res []byte) {
-	var b bytes.Buffer
-	gz := pgzip.NewWriter(&b)
-	gz.Write(body)
-	gz.Flush()
-	gz.Close()
-	return b.Bytes()
-}
-
-func UnGzip(b []byte) (res []byte, err error) {
-	rdata := bytes.NewReader(b)
-	r, err := pgzip.NewReader(rdata)
-	if err != nil {
-		return
+	if _, err := gz.Write(body); err != nil {
+		_ = gz.Close()
+		return nil, err
 	}
-	return ioutil.ReadAll(r)
+	if err := gz.Close(); err != nil {
+		return nil, err
+	}
+
+	return b.Bytes(), nil
 }
 
-func LZ4(in []byte) (out []byte) {
-	out, _ = lz4.Encode(nil, in)
-	return
+func Gzip(body []byte) ([]byte, error) {
+	var b bytes.Buffer
+
+	gz := pgzip.NewWriter(&b)
+	if _, err := gz.Write(body); err != nil {
+		_ = gz.Close()
+		return nil, err
+	}
+	if err := gz.Close(); err != nil {
+		return nil, err
+	}
+
+	return b.Bytes(), nil
 }
 
-func UnLZ4(in []byte) (out []byte) {
-	out, _ = lz4.Decode(nil, in)
-	return
+func UnGzip(b []byte) ([]byte, error) {
+	r, err := pgzip.NewReader(bytes.NewReader(b))
+	if err != nil {
+		return nil, err
+	}
+	defer r.Close()
+
+	return io.ReadAll(r)
 }
 
-func Zip(to string, files ...string) (err error) {
+func LZ4(in []byte) ([]byte, error) {
+	return lz4.Encode(nil, in)
+}
+
+func UnLZ4(in []byte) ([]byte, error) {
+	return lz4.Decode(nil, in)
+}
+
+func Zip(to string, files ...string) error {
 	archive, err := os.Create(to)
 	if err != nil {
-		return
+		return err
 	}
 	defer archive.Close()
-	zipWriter := zip.NewWriter(archive)
 
-	//files
+	zipWriter := zip.NewWriter(archive)
+	defer zipWriter.Close()
+
 	for _, filename := range files {
-		f, err := os.Open(filename)
-		if err != nil {
-			continue
-		}
-		defer f.Close()
-		w, err := zipWriter.Create(filename)
-		if err != nil {
-			continue
-		}
-		if _, err := io.Copy(w, f); err != nil {
-			continue
+		if err := addFileToZip(zipWriter, filename); err != nil {
+			return err
 		}
 	}
 
-	zipWriter.Close()
-	return
-
+	return nil
 }
 
-// only files
-// no dirs
-func Unzip(zipfile string, f func(name string, body []byte)) (err error) {
+func addFileToZip(zipWriter *zip.Writer, filename string) error {
+	info, err := os.Stat(filename)
+	if err != nil {
+		return err
+	}
+
+	if info.IsDir() {
+		return nil
+	}
+
+	f, err := os.Open(filename)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	header, err := zip.FileInfoHeader(info)
+	if err != nil {
+		return err
+	}
+
+	header.Name = filepath.ToSlash(filename)
+	header.Method = zip.Deflate
+
+	w, err := zipWriter.CreateHeader(header)
+	if err != nil {
+		return err
+	}
+
+	_, err = io.Copy(w, f)
+	return err
+}
+
+// Unzip reads only files, not directories.
+func Unzip(zipfile string, f func(name string, body []byte)) error {
+	if f == nil {
+		return errors.New("callback cannot be nil")
+	}
+
 	archive, err := zip.OpenReader(zipfile)
 	if err != nil {
-		return
+		return err
 	}
 	defer archive.Close()
 
 	for _, af := range archive.File {
-
-		fileInArchive, err2 := af.Open()
-		if err2 != nil {
+		if af.FileInfo().IsDir() {
 			continue
 		}
 
-		var b bytes.Buffer
-		if _, err := io.Copy(&b, fileInArchive); err != nil {
-			continue
+		body, err := readZipFile(af)
+		if err != nil {
+			return err
 		}
 
-		f(af.Name, b.Bytes())
-
-		err = fileInArchive.Close()
-
+		f(af.Name, body)
 	}
 
-	return
+	return nil
+}
+
+func readZipFile(af *zip.File) ([]byte, error) {
+	fileInArchive, err := af.Open()
+	if err != nil {
+		return nil, err
+	}
+	defer fileInArchive.Close()
+
+	return io.ReadAll(fileInArchive)
 }

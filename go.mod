@@ -1,6 +1,6 @@
 module github.com/monopolly/file
 
-go 1.18
+go 1.23
 
 require (
 	github.com/bkaradzic/go-lz4 v1.0.0
@@ -11,6 +11,7 @@ require (
 	github.com/monopolly/useragent v0.0.0-20220710193710-261fb66b5f7a
 	github.com/pquerna/ffjson v0.0.0-20190930134022-aa0246cd15f7
 	github.com/shamaton/msgpack v1.2.1
+	github.com/shamaton/msgpack/v3 v3.1.0
 	github.com/valyala/fasthttp v1.38.0
 )
 

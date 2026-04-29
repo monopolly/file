@@ -3,109 +3,75 @@ package file
 import (
 	"bufio"
 	"encoding/csv"
-	"fmt"
 	"io"
 	"os"
 	"strings"
 )
 
-//читает файл по строчно
+const maxLineSize = 512 * 1024
+
+func lineScanner(r io.Reader) *bufio.Scanner {
+	scanner := bufio.NewScanner(r)
+	scanner.Buffer(make([]byte, 64*1024), maxLineSize)
+	return scanner
+}
+
+// читает файл по строчно
 func Lines(fi string, limit uint, h func([]byte)) {
-	// open a file
-	if file, err := os.Open(fi); err == nil {
+	file, err := os.Open(fi)
+	if err != nil {
+		return
+	}
+	defer file.Close()
 
-		// make sure it gets closed
-		defer file.Close()
-
-		// create a new scanner and read the file line by line
-		scanner := bufio.NewScanner(file)
-		var l uint
-		for scanner.Scan() {
-			h([]byte(scanner.Text()))
-			l++
-			if l == limit {
-				return
-			}
-		}
-
-		// check for errors
-		if err = scanner.Err(); err != nil {
+	scanner := lineScanner(file)
+	var l uint
+	for scanner.Scan() {
+		h(append([]byte(nil), scanner.Bytes()...))
+		l++
+		if limit > 0 && l >= limit {
 			return
 		}
-
-	} else {
-		return
 	}
 }
 
-//читает файл по строчно
+// читает файл по строчно
 func Play(filename string, h func(line string)) {
-	// open a file
-	if file, err := os.Open(filename); err == nil {
-
-		// make sure it gets closed
-		defer file.Close()
-
-		// create a new scanner and read the file line by line
-		scanner := bufio.NewScanner(file)
-
-		//adjust the capacity to your need (max characters in line)
-		const maxCapacity = 512 * 1024
-		buf := make([]byte, maxCapacity)
-		scanner.Buffer(buf, maxCapacity)
-
-		var l uint
-		for scanner.Scan() {
-			h(scanner.Text())
-			l++
-		}
-
-		// check for errors
-		if err = scanner.Err(); err != nil {
-			return
-		}
-
-	} else {
+	file, err := os.Open(filename)
+	if err != nil {
 		return
+	}
+	defer file.Close()
+
+	scanner := lineScanner(file)
+	for scanner.Scan() {
+		h(scanner.Text())
 	}
 }
 
-//читает файл по строчно
-func PlayBytes(filename string, h func(line []byte)) (er error) {
-	// open a file
-	if file, err := os.Open(filename); err == nil {
-
-		// make sure it gets closed
-		defer file.Close()
-
-		// create a new scanner and read the file line by line
-		scanner := bufio.NewScanner(file)
-		//var l uint
-		for scanner.Scan() {
-			h([]byte(scanner.Text()))
-			//	l++
-		}
-
-		// check for errors
-		if er = scanner.Err(); er != nil {
-			fmt.Println(er)
-			return
-		}
-
-	} else {
-		fmt.Println(err)
+// читает файл по строчно
+func PlayBytes(filename string, h func(line []byte)) error {
+	file, err := os.Open(filename)
+	if err != nil {
+		return err
 	}
+	defer file.Close()
 
-	return
+	scanner := lineScanner(file)
+	for scanner.Scan() {
+		h(append([]byte(nil), scanner.Bytes()...))
+	}
+	return scanner.Err()
 }
 
 func PlayStop(filename string, h func(line string) (stop bool)) {
 	file, err := os.Open(filename)
 	if err != nil {
-		panic(err)
+		return
 	}
 	defer file.Close()
-	scanner := bufio.NewScanner(file)
+
+	scanner := lineScanner(file)
 	for scanner.Scan() {
 		if h(scanner.Text()) {
 			return
@@ -130,7 +96,7 @@ func CSV(file string, delim byte, h func(line []string) (stop bool)) {
 			}
 			return
 		}
-		for pos, _ := range p {
+		for pos := range p {
 			p[pos] = strings.TrimSpace(p[pos])
 		}
 		if h(p) {
@@ -139,7 +105,7 @@ func CSV(file string, delim byte, h func(line []string) (stop bool)) {
 	}
 }
 
-//fieldname = value
+// fieldname = value
 func SQL(filename string, h func(map[string]string)) {
 	fields := SQLStruct(filename)
 	SQLLines(filename, func(lines []string) {
@@ -159,111 +125,79 @@ func tosqlstruct(lines []string, fields []string) (res map[string]string) {
 }
 
 func SQLStruct(filename string) (fields []string) {
-	// open a file
+	file, err := os.Open(filename)
+	if err != nil {
+		return
+	}
+	defer file.Close()
 
-	if file, err := os.Open(filename); err == nil {
-
-		// make sure it gets closed
-		defer file.Close()
-
-		// create a new scanner and read the file line by line
-		scanner := bufio.NewScanner(file)
-		var count int
-		for scanner.Scan() {
-			count++
-			if count > 20 {
-				return
-			}
-			r := scanner.Text()
-			if strings.Index(r, "INSERT INTO") > -1 {
-				fmt.Println("got")
-				start := strings.Index(r, "(")
-				if start == -1 {
-					return
-				}
-				start++
-				fmt.Println("has start")
-				end := strings.Index(r, ") VALUES")
-				if end == -1 {
-					return
-				}
-				fmt.Println("has end")
-				fields = strings.Split(r[start:end], ", ")
-				return
-			}
-		}
-
-		// check for errors
-		if err = scanner.Err(); err != nil {
+	scanner := lineScanner(file)
+	var count int
+	for scanner.Scan() {
+		count++
+		if count > 20 {
 			return
 		}
 
-	} else {
-		return
+		r := scanner.Text()
+		if !strings.Contains(r, "INSERT INTO") {
+			continue
+		}
+
+		start := strings.Index(r, "(")
+		if start == -1 {
+			return
+		}
+		start++
+
+		end := strings.Index(r, ") VALUES")
+		if end == -1 {
+			return
+		}
+
+		return strings.Split(r[start:end], ", ")
 	}
 
 	return
 }
 
 func SQLLines(filename string, h func(lines []string)) {
-	// open a file
-
-	if file, err := os.Open(filename); err == nil {
-
-		// make sure it gets closed
-		defer file.Close()
-
-		// create a new scanner and read the file line by line
-		scanner := bufio.NewScanner(file)
-
-		for scanner.Scan() {
-			r := scanner.Text()
-			if len(r) == 0 || !strings.HasPrefix(r, "(") {
-				continue
-			}
-			r = strings.TrimPrefix(r, "(")
-			r = strings.TrimSuffix(r, "),")
-			r = strings.ReplaceAll(r, "NULL", "''")
-			lines := strings.Split(r, "', ")
-			for pos, _ := range lines {
-				lines[pos] = strings.ReplaceAll(lines[pos], "'", "")
-			}
-			h(lines)
-		}
-
-		// check for errors
-		if err = scanner.Err(); err != nil {
-			return
-		}
-
-	} else {
+	file, err := os.Open(filename)
+	if err != nil {
 		return
+	}
+	defer file.Close()
+
+	scanner := lineScanner(file)
+	for scanner.Scan() {
+		r := scanner.Text()
+		if len(r) == 0 || !strings.HasPrefix(r, "(") {
+			continue
+		}
+
+		r = strings.TrimPrefix(r, "(")
+		r = strings.TrimSuffix(r, "),")
+		r = strings.ReplaceAll(r, "NULL", "''")
+
+		lines := strings.Split(r, "', ")
+		for pos := range lines {
+			lines[pos] = strings.ReplaceAll(lines[pos], "'", "")
+		}
+		h(lines)
 	}
 }
 
-//считает строчки
+// считает строчки
 func Count(filename string) (count int) {
-	// open a file
-	if file, err := os.Open(filename); err == nil {
-		if err != nil {
-			return
-		}
-		// make sure it gets closed
-		defer file.Close()
-
-		// create a new scanner and read the file line by line
-		scanner := bufio.NewScanner(file)
-		for scanner.Scan() {
-			count++
-		}
-
-		// check for errors
-		if err = scanner.Err(); err != nil {
-			return
-		}
-
-	} else {
+	file, err := os.Open(filename)
+	if err != nil {
 		return
+	}
+	defer file.Close()
+
+	scanner := lineScanner(file)
+	for scanner.Scan() {
+		count++
 	}
 	return
 }

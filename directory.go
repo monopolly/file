@@ -1,7 +1,6 @@
 package file
 
 import (
-	"io/ioutil"
 	"os"
 	"path"
 	"path/filepath"
@@ -16,13 +15,17 @@ func Directory(dir string, h func(f os.FileInfo)) {
 	if dir == "" {
 		dir = "."
 	}
-	files, err := ioutil.ReadDir(dir)
+	files, err := os.ReadDir(dir)
 	if err != nil {
 		return
 	}
 
 	for _, f := range files {
-		h(f)
+		info, err := f.Info()
+		if err != nil {
+			continue
+		}
+		h(info)
 	}
 }
 
@@ -68,5 +71,4 @@ func Files(dir string, list *[]string, ext ...string) {
 		}
 		(*list) = append((*list), filepath.Join(dir, f.Name()))
 	})
-	return
 }

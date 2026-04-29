@@ -1,24 +1,18 @@
 package file
 
 import (
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strings"
 )
 
-func Rewrite(filename string, body []byte) (err error) {
-	ioutil.WriteFile(filename, body, os.ModePerm)
-	return
+func Rewrite(filename string, body []byte) error {
+	return os.WriteFile(filename, body, 0o666)
 }
 
 func Exists(name string) bool {
-	if _, err := os.Stat(name); err != nil {
-		if os.IsNotExist(err) {
-			return false
-		}
-	}
-	return true
+	_, err := os.Stat(name)
+	return err == nil || !os.IsNotExist(err)
 }
 
 func Info(name string) (os.FileInfo, error) {
@@ -43,11 +37,11 @@ func Int(name string) int {
 }
 
 func Ext(name string) (res string) {
-	res = filepath.Ext(name)
-	return strings.TrimPrefix(res, ".")
+	return strings.TrimPrefix(filepath.Ext(name), ".")
 }
-func Filename(path string) (res string) {
-	return filepath.Base(path)
+
+func Filename(name string) string {
+	return filepath.Base(name)
 }
 
 func SizeE(name string) (size int64, err error) {

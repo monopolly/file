@@ -22,14 +22,14 @@ func DownloadFile(from string, to string, headers map[string]string, progress ..
 			req.HTTPRequest.Header.Add(k, v)
 		}
 
-		if headers["User-agent"] == "" {
-			ua = headers["User-agent"]
+		if userAgent := headers["User-agent"]; userAgent != "" {
+			ua = userAgent
 		}
 	}
 
 	req.HTTPRequest.Header.Add("Connection", "keep-alive")
 	req.HTTPRequest.Header.Add("Accept", "*/*")
-	req.HTTPRequest.Header.Add("Accept-Languag", "en-us")
+	req.HTTPRequest.Header.Add("Accept-Language", "en-us")
 	req.HTTPRequest.Header.Add("DNT", "1")
 
 	c := grab.NewClient()
@@ -53,9 +53,5 @@ Loop:
 		}
 	}
 
-	// check for errors
-	if err != nil {
-		return
-	}
-	return
+	return resp.Err()
 }

@@ -4,61 +4,68 @@ import (
 	"bytes"
 	"encoding/csv"
 	"fmt"
-	"log"
 	"os"
 )
 
-func Append(filename string, body []byte) (err error) {
-	f, err := os.OpenFile(filename, os.O_APPEND|os.O_CREATE|os.O_WRONLY, os.ModePerm)
+func Append(filename string, body []byte) error {
+	f, err := os.OpenFile(filename, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o666)
 	if err != nil {
-		return
+		return err
 	}
 
 	defer f.Close()
 	_, err = f.Write(body)
-	return
+	return err
 }
 
-func AppendLine(filename string, line []byte) (err error) {
-	f, err := os.OpenFile(filename, os.O_APPEND|os.O_CREATE|os.O_WRONLY, os.ModePerm)
+func AppendLine(filename string, line []byte) error {
+	f, err := os.OpenFile(filename, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o666)
 	if err != nil {
-		return
+		return err
 	}
 
 	defer f.Close()
-	f.Write(line)
-	f.WriteString("\n")
-	return
+	if _, err := f.Write(line); err != nil {
+		return err
+	}
+	_, err = f.WriteString("\n")
+	return err
 }
 
-//csv
-func Log(filename string, body ...interface{}) (err error) {
-	lines := []string{}
+// csv
+func Log(filename string, body ...any) (err error) {
+	lines := make([]string, 0, len(body))
 	for _, line := range body {
 		lines = append(lines, fmt.Sprint(line))
 	}
+
 	var b bytes.Buffer
 	w := csv.NewWriter(&b)
-	err = w.Write(lines)
-	if err != nil {
-		log.Println(err)
+	if err = w.Write(lines); err != nil {
+		return err
 	}
-	//аерепрпе
 	w.Flush()
+	if err = w.Error(); err != nil {
+		return err
+	}
+
 	return Append(filename, b.Bytes())
 }
 
-func Appends(filename string, list ...[]byte) (err error) {
-	f, err := os.OpenFile(filename, os.O_APPEND|os.O_CREATE|os.O_WRONLY, os.ModePerm)
+func Appends(filename string, list ...[]byte) error {
+	f, err := os.OpenFile(filename, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o666)
 	if err != nil {
-		return
+		return err
 	}
 	defer f.Close()
+
 	for _, body := range list {
-		_, err = f.Write(append(body, '\n'))
-		if err != nil {
-			continue
+		if _, err := f.Write(body); err != nil {
+			return err
+		}
+		if _, err := f.WriteString("\n"); err != nil {
+			return err
 		}
 	}
-	return
+	return nil
 }
