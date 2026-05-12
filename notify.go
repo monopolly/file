@@ -4,7 +4,6 @@ import (
 	"fmt"
 
 	"github.com/fsnotify/fsnotify"
-	"github.com/monopolly/dirwatch"
 )
 
 /* следит за обновлением файла */
@@ -43,13 +42,13 @@ func Notify(filename string, onUpdate func()) (err error) {
 }
 
 /* следит за обновлением директории */
-func NotifyDir(dir string, onUpdate func(filename string)) {
-	watcher := dirwatch.New(
-		dirwatch.Notify(
-			func(e dirwatch.Event) {
-				onUpdate(e.Name)
-			},
-		),
-	)
-	defer watcher.Stop()
-}
+// func NotifyDir(dir string, onUpdate func(filename string)) {
+// 	watcher := dirwatch.New(
+// 		dirwatch.Notify(
+// 			func(e dirwatch.Event) {
+// 				onUpdate(e.Name)
+// 			},
+// 		),
+// 	)
+// 	defer watcher.Stop()
+// }
